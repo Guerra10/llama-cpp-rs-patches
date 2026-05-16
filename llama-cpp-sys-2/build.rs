@@ -1111,4 +1111,6 @@ fn main() {
             }
         }
     }
+
+    println!("cargo:src_dir={}", llama_src.display());
 }
