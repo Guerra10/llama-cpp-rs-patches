@@ -561,7 +561,7 @@ pub enum VocabType {
     /// PLaMo-2 tokenizer based on Aho-Corasick with dynamic programming
     PLAMO2 = llama_cpp_sys_2::LLAMA_VOCAB_TYPE_PLAMO2 as _,
     /// Dummy tokenizer for testing: rolling hash of fixed-size chunks -> tokens, tokens -> hex
-    TEST = llama_cpp_sys_2::LLAMA_VOCAB_TYPE_TEST as _,
+    TEST = 999, // prism tree: LLAMA_VOCAB_TYPE_TEST absent
 }
 
 /// There was an error converting a `llama_vocab_type` to a `VocabType`.
