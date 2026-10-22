@@ -633,3 +633,100 @@ impl Drop for LlamaModel {
         unsafe { llama_cpp_sys_2::llama_free_model(self.model.as_mut_ptr()) }
     }
 }
+
+// ===================== PRISM COMPAT (P5d) =====================
+// The pre-0.1.15x LlamaModel tokenizer surface recreated over the
+// vocab() API, so engines written against the 0.1.144-era wrapper
+// API compile unchanged against this wrapper.
+
+/// Legacy tokenizer flag: whether to add the beginning-of-stream token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddBos {
+    /// Add the beginning-of-stream token to the start of the string.
+    Always,
+    /// Do not add the beginning-of-stream token.
+    Never,
+}
+
+/// Legacy error type kept for signature compatibility. Returned only
+/// for interior-NUL input: the legacy wrapper built a `CString`, so a
+/// NUL byte was its one failure mode, and the shim preserves that
+/// contract (legacy callers still map this arm).
+#[derive(Debug)]
+pub struct StringToTokenError;
+
+impl std::fmt::Display for StringToTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "string to token conversion failed")
+    }
+}
+
+impl std::error::Error for StringToTokenError {}
+
+/// Legacy error type kept for signature compatibility; the vocab
+/// detokenizer is infallible, so this is never actually returned.
+#[derive(Debug)]
+pub struct TokenToPieceError;
+
+impl std::fmt::Display for TokenToPieceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "token to piece conversion failed")
+    }
+}
+
+impl std::error::Error for TokenToPieceError {}
+
+impl LlamaModel {
+    /// Legacy tokenize: special-token parsing is always on, matching the
+    /// pre-0.1.15x behavior legacy callers were written against.
+    ///
+    /// # Errors
+    /// Returns `StringToTokenError` for text containing an interior NUL
+    /// byte (legacy parity: the old wrapper's `CString::new` made NUL
+    /// its one failure mode, and legacy callers still map that arm).
+    pub fn str_to_token(
+        &self,
+        text: &str,
+        add_bos: AddBos,
+    ) -> Result<Vec<LlamaToken>, StringToTokenError> {
+        if text.as_bytes().contains(&0) {
+            return Err(StringToTokenError);
+        }
+        let add_special = matches!(add_bos, AddBos::Always);
+        Ok(self.vocab().tokenize(text.as_bytes(), add_special, true))
+    }
+
+    /// Legacy end-of-stream token accessor.
+    #[must_use]
+    pub fn token_eos(&self) -> LlamaToken {
+        self.vocab().eos()
+    }
+
+    /// Legacy end-of-generation probe.
+    #[must_use]
+    pub fn is_eog_token(&self, token: LlamaToken) -> bool {
+        self.vocab().is_eog(token)
+    }
+
+    /// Legacy token attribute accessor.
+    #[must_use]
+    pub fn token_attr(&self, token: LlamaToken) -> crate::token_type::LlamaTokenAttrs {
+        self.vocab().attr(token)
+    }
+
+    /// Legacy detokenizer. The buffer-size hint is ignored; the vocab API
+    /// sizes its own buffer.
+    ///
+    /// # Errors
+    /// Never fails; the `Result` shape is kept for call-site compatibility.
+    pub fn token_to_piece_bytes(
+        &self,
+        token: LlamaToken,
+        _buffer_size: usize,
+        special: bool,
+        lstrip: Option<std::num::NonZeroU16>,
+    ) -> Result<Vec<u8>, TokenToPieceError> {
+        Ok(self.vocab().token_to_piece(token, special, lstrip))
+    }
+}
+// =================== END PRISM COMPAT (P5d) ===================
