@@ -166,7 +166,10 @@ pub struct MtmdContext {
 // SAFETY: `mtmd_context` tokenization is thread safe.
 //
 // Note that evaluation and encoding is not thread-safe, but we ensure this
-// doesn't happen on multiple threads by making those methods take `&mut`.
+// does not happen on multiple threads via a CALLER obligation: this
+// wrapper relaxes eval_chunks to &self (the body goes through raw
+// pointers), so exclusive use during eval and encode must be
+// guaranteed by the embedding's own serialization of those calls.
 unsafe impl Send for MtmdContext {}
 // SAFETY: Same as above.
 // Unlike `LlamaContext`, this context doesn't need to synchronize at various
@@ -215,7 +218,7 @@ impl MtmdContext {
     #[must_use]
     pub fn decode_use_non_causal(&self) -> bool {
         unsafe {
-            llama_cpp_sys_2::mtmd_decode_use_non_causal(self.context.as_ptr(), std::ptr::null())
+            llama_cpp_sys_2::mtmd_decode_use_non_causal(self.context.as_ptr().cast_mut(), std::ptr::null())
         }
     }
 
@@ -309,7 +312,7 @@ impl MtmdContext {
 
         let result = unsafe {
             llama_cpp_sys_2::mtmd_tokenize(
-                self.context.as_ptr(),
+                self.context.as_ptr().cast_mut(),
                 chunks.chunks.as_mut_ptr(),
                 &raw const input_text,
                 bitmap_ptrs.as_ptr().cast_mut(),
@@ -490,10 +493,9 @@ impl MtmdBitmap {
         // with it on, so it is always null here and only the bitmap matters.
         let wrapper = unsafe {
             llama_cpp_sys_2::mtmd_helper_bitmap_init_from_file(
-                ctx.context.as_ptr(),
+                ctx.context.as_ptr().cast_mut(),
                 path_cstr.as_ptr(),
                 placeholder,
-                llama_cpp_sys_2::mtmd_helper_init_opt_default(),
             )
         };
 
@@ -526,7 +528,7 @@ impl MtmdBitmap {
     /// * `NullResult` - Buffer could not be processed
     ///
     /// This function is thread-safe.
-    pub fn from_buffer(
+    pub fn from_buffer_opts(
         ctx: &MtmdContext,
         data: &[u8],
         placeholder: bool,
@@ -535,11 +537,10 @@ impl MtmdBitmap {
         // `video_ctx` is always null since MTMD_VIDEO is not enabled in this build.
         let wrapper = unsafe {
             llama_cpp_sys_2::mtmd_helper_bitmap_init_from_buf(
-                ctx.context.as_ptr(),
+                ctx.context.as_ptr().cast_mut(),
                 data.as_ptr(),
                 data.len(),
                 placeholder,
-                llama_cpp_sys_2::mtmd_helper_init_opt_default(),
             )
         };
 
@@ -772,8 +773,8 @@ impl MtmdInputChunks {
     /// This function is NOT thread-safe.
     pub fn eval_chunks(
         &self,
-        mtmd_ctx: &mut MtmdContext,
-        llama_ctx: &mut LlamaContext,
+        mtmd_ctx: &MtmdContext,
+        llama_ctx: &LlamaContext,
         n_past: llama_cpp_sys_2::llama_pos,
         seq_id: llama_cpp_sys_2::llama_seq_id,
         n_batch: i32,
@@ -783,8 +784,8 @@ impl MtmdInputChunks {
 
         let result = unsafe {
             llama_cpp_sys_2::mtmd_helper_eval_chunks(
-                mtmd_ctx.context.as_mut_ptr(),
-                llama_ctx.context.as_mut_ptr(),
+                mtmd_ctx.context.as_ptr().cast_mut(),
+                llama_ctx.context.as_ptr().cast_mut(),
                 self.chunks.as_ptr(),
                 n_past,
                 seq_id,
@@ -1037,4 +1038,16 @@ pub enum MtmdEvalError {
     /// Evaluation operation failed
     #[error("Eval failed with code: {0}")]
     EvalFailure(i32),
+}
+
+// PRISM COMPAT (P5c): legacy 2-argument bitmap constructor (decodes the
+// data for real; placeholder bitmaps arrived with the options parameter).
+impl MtmdBitmap {
+    /// Legacy constructor: decode `data` (placeholder = false).
+    ///
+    /// # Errors
+    /// See [`MtmdBitmap::from_buffer_opts`].
+    pub fn from_buffer(ctx: &MtmdContext, data: &[u8]) -> Result<Self, MtmdBitmapError> {
+        Self::from_buffer_opts(ctx, data, false)
+    }
 }
