@@ -597,7 +597,7 @@ impl LlamaSampler {
     /// - ``penalty_present``: must be finite, 0.0 = disabled
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub fn penalties(
+    pub fn penalties_n_vocab(
         n_vocab: i32,
         penalty_last_n: i32,
         penalty_repeat: f32,
@@ -781,5 +781,28 @@ mod tests {
             r#"LlamaSampler { name: "chain", chain: [LlamaSampler { name: "dist" }, LlamaSampler { name: "greedy" }, LlamaSampler { name: "chain", chain: [LlamaSampler { name: "min-p" }] }] }"#,
             format!("{sampler:?}")
         );
+    }
+}
+
+// PRISM COMPAT (P5b): legacy 4-argument penalties constructor. This
+// tree's sampler stores n_vocab (its backend path sizes a per-vocab
+// buffer), so the shim passes a ceiling comfortably above any shipped
+// model's vocabulary. Oversizing is safe; undersizing is not.
+impl LlamaSampler {
+    /// Legacy penalties constructor (no `n_vocab` parameter).
+    #[must_use]
+    pub fn penalties(
+        penalty_last_n: i32,
+        penalty_repeat: f32,
+        penalty_freq: f32,
+        penalty_present: f32,
+    ) -> Self {
+        Self::penalties_n_vocab(
+            262_144,
+            penalty_last_n,
+            penalty_repeat,
+            penalty_freq,
+            penalty_present,
+        )
     }
 }
